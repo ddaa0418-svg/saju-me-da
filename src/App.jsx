@@ -113,7 +113,8 @@ function App() {
   const [readings, setReadings] = useState([])
   const [readingsError, setReadingsError] = useState('')
   const [selectedId, setSelectedId] = useState(null)
-  const [viewMode, setViewMode] = useState('create') // 'create' | 'saved'
+  const [viewMode, setViewMode] = useState('create') // 'create' | 'saved' | 'edit'
+  const [editingId, setEditingId] = useState(null)
   const [resultRevealKey, setResultRevealKey] = useState(0)
   const resultBlockRef = useRef(null)
   const selectTokenRef = useRef(0)
@@ -173,6 +174,7 @@ function App() {
     setGender(reading.gender || '')
     setCalendarType(reading.calendar_type || '')
     setSelectedId(reading.id)
+    setEditingId(null)
     setViewMode('saved')
     setError('')
     setSummary('')
@@ -221,8 +223,39 @@ function App() {
     setShowBlessing(false)
     setError('')
     setSelectedId(null)
+    setEditingId(null)
     setViewMode('create')
     setResultRevealKey((key) => key + 1)
+  }
+
+  const startEditReading = () => {
+    if (!selectedId) return
+    setEditingId(selectedId)
+    setViewMode('edit')
+    setError('')
+    setResultRevealKey((key) => key + 1)
+  }
+
+  const handleDeleteReading = async (reading, event) => {
+    event.stopPropagation()
+    const ok = window.confirm(`「${reading.name}」님의 저장된 사주를 삭제할까요?`)
+    if (!ok) return
+
+    const { error: deleteError } = await supabase
+      .from('saju_readings')
+      .delete()
+      .eq('id', reading.id)
+
+    if (deleteError) {
+      console.error(deleteError)
+      setReadingsError(deleteError.message || '삭제에 실패했습니다.')
+      return
+    }
+
+    setReadings((prev) => prev.filter((item) => item.id !== reading.id))
+    if (selectedId === reading.id || editingId === reading.id) {
+      startNewSaju()
+    }
   }
 
   const handleNameChange = (event) => {
@@ -240,14 +273,18 @@ function App() {
       return
     }
 
+    const isEditing = Boolean(editingId)
+
     setLoading(true)
     setError('')
     setResult('')
     setSummary('')
     setTodayFortune('')
     setShowBlessing(false)
-    setSelectedId(null)
-    setViewMode('create')
+    if (!isEditing) {
+      setSelectedId(null)
+      setViewMode('create')
+    }
 
     try {
       const today = new Date().toLocaleDateString('ko-KR', {
@@ -267,39 +304,60 @@ function App() {
       })
 
       const text = await askGemini(prompt)
-
       const parsed = parseSajuResponse(text)
+      const payload = {
+        name,
+        birth_date: birthDate,
+        birth_time: birthTime,
+        gender,
+        calendar_type: calendarType,
+        summary: parsed.summary || '',
+        detail: parsed.detail || '',
+        today_fortune: parsed.todayFortune || '',
+      }
 
-      // CSS 애니메이션으로 바로 표시 (인위적 대기 없음)
-      setSummary(parsed.summary || '')
-      setResult(parsed.detail || '')
-      setTodayFortune(parsed.todayFortune || '')
+      setSummary(payload.summary)
+      setResult(payload.detail)
+      setTodayFortune(payload.today_fortune)
       setShowBlessing(true)
-      setViewMode('saved')
       setLoading(false)
 
-      const { data: saved, error: saveError } = await supabase
-        .from('saju_readings')
-        .insert({
-          name,
-          birth_date: birthDate,
-          birth_time: birthTime,
-          gender,
-          calendar_type: calendarType,
-          summary: parsed.summary || '',
-          detail: parsed.detail || '',
-          today_fortune: parsed.todayFortune || '',
-        })
-        .select('id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at')
-        .single()
+      const query = isEditing
+        ? supabase
+            .from('saju_readings')
+            .update(payload)
+            .eq('id', editingId)
+            .select(
+              'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
+            )
+            .single()
+        : supabase
+            .from('saju_readings')
+            .insert(payload)
+            .select(
+              'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
+            )
+            .single()
+
+      const { data: saved, error: saveError } = await query
 
       if (saveError) {
         console.error(saveError)
-        setError('사주 결과는 나왔지만 저장에 실패했습니다.')
+        setError(
+          isEditing
+            ? '사주 결과는 나왔지만 수정 저장에 실패했습니다.'
+            : '사주 결과는 나왔지만 저장에 실패했습니다.'
+        )
       } else if (saved) {
         setSelectedId(saved.id)
+        setEditingId(null)
         setViewMode('saved')
-        setReadings((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)])
+        setReadings((prev) => {
+          const without = prev.filter((item) => item.id !== saved.id)
+          return [saved, ...without]
+        })
+      } else {
+        setViewMode('saved')
       }
     } catch (err) {
       console.error(err)
@@ -309,7 +367,15 @@ function App() {
   }
 
   return (
-    <div className={`layout${viewMode === 'saved' ? ' layout--saved' : ' layout--create'}`}>
+    <div
+      className={`layout${
+        viewMode === 'saved'
+          ? ' layout--saved'
+          : viewMode === 'edit'
+            ? ' layout--edit'
+            : ' layout--create'
+      }`}
+    >
       <aside className="sidebar" aria-label="저장된 사주 목록">
         <h2 className="sidebar-title">저장된 사주</h2>
         <button type="button" className="new-saju-btn" onClick={startNewSaju}>
@@ -322,7 +388,7 @@ function App() {
         ) : (
           <ul className="sidebar-list">
             {readings.map((reading) => (
-              <li key={reading.id}>
+              <li key={reading.id} className="sidebar-row">
                 <button
                   type="button"
                   className={`sidebar-item${selectedId === reading.id && viewMode === 'saved' ? ' sidebar-item--active' : ''}`}
@@ -332,6 +398,15 @@ function App() {
                   {selectedId === reading.id && viewMode === 'saved' && (
                     <span className="sidebar-item-badge">보는 중</span>
                   )}
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-delete"
+                  aria-label={`${reading.name} 사주 삭제`}
+                  title="삭제"
+                  onClick={(event) => handleDeleteReading(reading, event)}
+                >
+                  삭제
                 </button>
               </li>
             ))}
@@ -370,12 +445,14 @@ function App() {
           <button
             type="button"
             role="tab"
-            aria-selected={viewMode === 'create'}
-            className={`view-tab view-tab--create${viewMode === 'create' ? ' view-tab--active' : ''}`}
+            aria-selected={viewMode === 'create' || viewMode === 'edit'}
+            className={`view-tab view-tab--create${viewMode === 'create' || viewMode === 'edit' ? ' view-tab--active' : ''}`}
             onClick={startNewSaju}
           >
-            <span className="view-tab-label">새 입력</span>
-            <span className="view-tab-desc">새로 입력하기</span>
+            <span className="view-tab-label">{viewMode === 'edit' ? '수정 중' : '새 입력'}</span>
+            <span className="view-tab-desc">
+              {viewMode === 'edit' ? '저장된 사주 수정하기' : '새로 입력하기'}
+            </span>
           </button>
         </div>
 
@@ -388,6 +465,21 @@ function App() {
                 님의 저장된 사주
               </p>
               <p className="saved-view-hint">왼쪽 목록에서 다른 이름을 고르거나, 위쪽 「새로 입력하기」로 새 사주를 작성하세요.</p>
+              <div className="saved-actions">
+                <button type="button" className="saved-edit-btn" onClick={startEditReading}>
+                  이 사주 수정하기
+                </button>
+                <button
+                  type="button"
+                  className="saved-delete-btn"
+                  onClick={(event) => {
+                    const reading = readings.find((item) => item.id === selectedId)
+                    if (reading) handleDeleteReading(reading, event)
+                  }}
+                >
+                  이 사주 삭제하기
+                </button>
+              </div>
             </div>
             <dl className="saved-meta">
               <div>
@@ -441,15 +533,21 @@ function App() {
           </section>
         ) : (
         <form
-          className="form form--create"
+          className={`form form--create${viewMode === 'edit' ? ' form--edit' : ''}`}
           onSubmit={(event) => {
             event.preventDefault()
             handleAnalyze()
           }}
         >
           <div className="create-view-banner">
-            <span className="mode-chip mode-chip--create">새 입력</span>
-            <p className="create-view-title">새 사주 정보를 입력하세요</p>
+            <span className={`mode-chip ${viewMode === 'edit' ? 'mode-chip--edit' : 'mode-chip--create'}`}>
+              {viewMode === 'edit' ? '수정' : '새 입력'}
+            </span>
+            <p className="create-view-title">
+              {viewMode === 'edit'
+                ? '저장된 사주 정보를 수정한 뒤 다시 풀이하세요'
+                : '새 사주 정보를 입력하세요'}
+            </p>
           </div>
           <div className="field">
             <label htmlFor="name">이름</label>
@@ -563,7 +661,11 @@ function App() {
           <p className="preview">{name}님의 사주 </p>
 
           <button className="analyze-btn" type="submit" disabled={loading}>
-            {loading ? '사주 풀이 중...' : '사주 보기'}
+            {loading
+              ? '사주 풀이 중...'
+              : viewMode === 'edit'
+                ? '다시 풀이하고 수정 저장'
+                : '사주 보기'}
           </button>
 
           {loading && (
