@@ -7,7 +7,7 @@ import './App.css'
 // .env의 VITE_GEMINI_API_KEY 사용 (Vite는 VITE_ 접두사만 프론트에 노출)
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
 
-// Interactions API — 할당량 여유 있는 lite 모델 사용
+// Interactions API — 신규 키는 2.5-flash-lite 사용 불가 → 3.x lite 사용
 async function askGemini(prompt) {
   const response = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/interactions',
@@ -18,11 +18,11 @@ async function askGemini(prompt) {
         'x-goog-api-key': API_KEY,
       },
       body: JSON.stringify({
-        model: 'gemini-2.5-flash-lite',
+        model: 'gemini-3.1-flash-lite',
         input: prompt,
         generation_config: {
           thinking_level: 'minimal',
-          max_output_tokens: 400,
+          max_output_tokens: 1400,
           temperature: 0.7,
         },
       }),
@@ -113,6 +113,7 @@ function App() {
   const [readings, setReadings] = useState([])
   const [readingsError, setReadingsError] = useState('')
   const [selectedId, setSelectedId] = useState(null)
+  const [viewMode, setViewMode] = useState('create') // 'create' | 'saved'
   const [resultRevealKey, setResultRevealKey] = useState(0)
   const resultBlockRef = useRef(null)
   const selectTokenRef = useRef(0)
@@ -172,6 +173,7 @@ function App() {
     setGender(reading.gender || '')
     setCalendarType(reading.calendar_type || '')
     setSelectedId(reading.id)
+    setViewMode('saved')
     setError('')
     setSummary('')
     setResult('')
@@ -219,6 +221,7 @@ function App() {
     setShowBlessing(false)
     setError('')
     setSelectedId(null)
+    setViewMode('create')
     setResultRevealKey((key) => key + 1)
   }
 
@@ -244,6 +247,7 @@ function App() {
     setTodayFortune('')
     setShowBlessing(false)
     setSelectedId(null)
+    setViewMode('create')
 
     try {
       const today = new Date().toLocaleDateString('ko-KR', {
@@ -271,6 +275,7 @@ function App() {
       setResult(parsed.detail || '')
       setTodayFortune(parsed.todayFortune || '')
       setShowBlessing(true)
+      setViewMode('saved')
       setLoading(false)
 
       const { data: saved, error: saveError } = await supabase
@@ -293,6 +298,7 @@ function App() {
         setError('사주 결과는 나왔지만 저장에 실패했습니다.')
       } else if (saved) {
         setSelectedId(saved.id)
+        setViewMode('saved')
         setReadings((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)])
       }
     } catch (err) {
@@ -303,7 +309,7 @@ function App() {
   }
 
   return (
-    <div className="layout">
+    <div className={`layout${viewMode === 'saved' ? ' layout--saved' : ' layout--create'}`}>
       <aside className="sidebar" aria-label="저장된 사주 목록">
         <h2 className="sidebar-title">저장된 사주</h2>
         <button type="button" className="new-saju-btn" onClick={startNewSaju}>
@@ -319,10 +325,13 @@ function App() {
               <li key={reading.id}>
                 <button
                   type="button"
-                  className={`sidebar-item${selectedId === reading.id ? ' sidebar-item--active' : ''}`}
+                  className={`sidebar-item${selectedId === reading.id && viewMode === 'saved' ? ' sidebar-item--active' : ''}`}
                   onClick={() => applyReadingToForm(reading)}
                 >
-                  {reading.name}
+                  <span className="sidebar-item-name">{reading.name}</span>
+                  {selectedId === reading.id && viewMode === 'saved' && (
+                    <span className="sidebar-item-badge">보는 중</span>
+                  )}
                 </button>
               </li>
             ))}
@@ -347,13 +356,101 @@ function App() {
           </p>
         </header>
 
+        <div className="view-tabs" role="tablist" aria-label="보기 모드">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'saved'}
+            className={`view-tab view-tab--saved${viewMode === 'saved' ? ' view-tab--active' : ''}`}
+            disabled={viewMode !== 'saved'}
+          >
+            <span className="view-tab-label">저장 목록</span>
+            <span className="view-tab-desc">저장된 사주를 보고 있습니다.</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'create'}
+            className={`view-tab view-tab--create${viewMode === 'create' ? ' view-tab--active' : ''}`}
+            onClick={startNewSaju}
+          >
+            <span className="view-tab-label">새 입력</span>
+            <span className="view-tab-desc">새로 입력하기</span>
+          </button>
+        </div>
+
+        {viewMode === 'saved' ? (
+          <section className="saved-view" aria-label="저장된 사주">
+            <div className="saved-view-banner">
+              <span className="mode-chip mode-chip--saved">저장됨</span>
+              <p className="saved-view-title">
+                <span className="saved-view-name">{name}</span>
+                님의 저장된 사주
+              </p>
+              <p className="saved-view-hint">왼쪽 목록에서 다른 이름을 고르거나, 위쪽 「새로 입력하기」로 새 사주를 작성하세요.</p>
+            </div>
+            <dl className="saved-meta">
+              <div>
+                <dt>생년월일</dt>
+                <dd>{birthDate || '-'}</dd>
+              </div>
+              <div>
+                <dt>시간</dt>
+                <dd>{birthTime || '-'}</dd>
+              </div>
+              <div>
+                <dt>성별</dt>
+                <dd>{gender || '-'}</dd>
+              </div>
+              <div>
+                <dt>달력</dt>
+                <dd>{calendarType || '-'}</dd>
+              </div>
+            </dl>
+
+            {(summary || result || todayFortune || showBlessing) && (
+              <div
+                key={resultRevealKey}
+                className="result-block"
+                ref={resultBlockRef}
+                aria-live="polite"
+              >
+                {summary && (
+                  <p className="summary reveal-item">
+                    <span className="summary-label">한줄 요약</span>
+                    {summary}
+                  </p>
+                )}
+                {result && (
+                  <div className="result reveal-item">
+                    <span className="summary-label">상세 해석</span>
+                    {result}
+                  </div>
+                )}
+                {todayFortune && (
+                  <p className="today-fortune reveal-item">
+                    <span className="summary-label">오늘의 운세</span>
+                    {todayFortune}
+                  </p>
+                )}
+                {showBlessing && name && (
+                  <p className="blessing reveal-item">{name}님 행운을 빌어요 🍀</p>
+                )}
+              </div>
+            )}
+          </section>
+        ) : (
         <form
-          className="form"
+          className="form form--create"
           onSubmit={(event) => {
             event.preventDefault()
             handleAnalyze()
           }}
         >
+          <div className="create-view-banner">
+            <span className="mode-chip mode-chip--create">새 입력</span>
+            <p className="create-view-title">새 사주 정보를 입력하세요</p>
+          </div>
           <div className="field">
             <label htmlFor="name">이름</label>
             <input
@@ -477,19 +574,13 @@ function App() {
 
           {error && <p className="error">{error}</p>}
 
-          {(summary || result || todayFortune || showBlessing || selectedId) && (
+          {(summary || result || todayFortune || showBlessing) && (
             <div
               key={resultRevealKey}
               className="result-block"
               ref={resultBlockRef}
               aria-live="polite"
             >
-              {selectedId && (
-                <p className="result-heading reveal-item">
-                  <span className="result-heading-name">{name}</span>
-                  님의 저장된 사주
-                </p>
-              )}
               {summary && (
                 <p className="summary reveal-item">
                   <span className="summary-label">한줄 요약</span>
@@ -514,6 +605,7 @@ function App() {
             </div>
           )}
         </form>
+        )}
       </div>
     </div>
   )
