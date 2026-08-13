@@ -258,3 +258,41 @@ export async function deleteSajuUser({ authUserId, sajuUserId }) {
 
   if (error) throw error
 }
+
+/** Total saved readings. Safe for guests: returns a count only, no row data. */
+export async function fetchSajuReadingCount() {
+  if (!isSupabaseConfigured) return null
+
+  const { data, error } = await supabase.rpc('count_saju_readings')
+  if (error) throw error
+
+  const count = Number(data)
+  return Number.isFinite(count) ? count : null
+}
+
+/** Public share page: one reading by id, no login required. */
+export async function fetchSharedSajuReading(shareId) {
+  if (!isSupabaseConfigured) {
+    throw new Error('Supabase 환경변수가 설정되지 않았습니다.')
+  }
+
+  const { data, error } = await supabase.rpc('get_shared_saju_reading', {
+    share_id: shareId,
+  })
+
+  if (error) throw error
+  if (!data) return null
+
+  return {
+    id: data.id,
+    name: data.name || '',
+    birth_date: data.birth_date || '',
+    birth_time: data.birth_time || '',
+    gender: data.gender || '',
+    calendar_type: data.calendar_type || '',
+    summary: data.summary || '',
+    detail: data.detail || '',
+    today_fortune: data.today_fortune || '',
+    created_at: data.created_at || '',
+  }
+}

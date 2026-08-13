@@ -1,4 +1,13 @@
-@import url('https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Noto+Sans+KR:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+
+@font-face {
+  font-family: 'GeuriunXGukhanbakDaheul';
+  src: url('/fonts/GriunXHangeul_DAHL-Rg.woff2') format('woff2'),
+    url('https://cdn.jsdelivr.net/gh/Project-Noonnu/2607161334@x/x/GriunXHangeul_DAHL-Rg.woff2')
+      format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
 
 :root {
   --ink: #1f1235;
@@ -15,6 +24,7 @@
   --radius: 14px;
   --font-body: 'Noto Sans KR', sans-serif;
   --font-display: 'Gowun Batang', serif;
+  --font-nyang: 'GeuriunXGukhanbakDaheul', 'Gowun Batang', serif;
 }
 
 * {

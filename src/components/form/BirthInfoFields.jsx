@@ -1,4 +1,4 @@
-function BirthInfoFields({
+export default function BirthInfoFields({
   idPrefix,
   values,
   onChange,
@@ -143,5 +143,3 @@ function BirthInfoFields({
     </>
   )
 }
-
-export default BirthInfoFields

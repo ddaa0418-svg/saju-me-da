@@ -1,20 +1,8 @@
 import { useEffect, useState } from 'react'
-import BirthInfoFields from './BirthInfoFields'
+import BirthInfoFields from '../form/BirthInfoFields'
+import { combineBirthDate, combineBirthTime, emptyBirthValues } from '../../utils/birthOptions'
 
-function emptyValues() {
-  return {
-    name: '',
-    birthYear: '',
-    birthMonth: '',
-    birthDay: '',
-    birthHour: '',
-    birthMinute: '',
-    gender: '',
-    calendarType: '',
-  }
-}
-
-function ProfileModal({
+export default function ProfileModal({
   mode,
   initialValues,
   years,
@@ -29,7 +17,7 @@ function ProfileModal({
   onLogout,
 }) {
   const [values, setValues] = useState(() => ({
-    ...emptyValues(),
+    ...emptyBirthValues(),
     ...initialValues,
   }))
   const isOnboard = mode === 'onboard'
@@ -58,14 +46,8 @@ function ProfileModal({
 
   const handleSubmit = (event) => {
     event.preventDefault()
-    const birthDate =
-      values.birthYear && values.birthMonth && values.birthDay
-        ? `${values.birthYear}-${values.birthMonth}-${values.birthDay}`
-        : ''
-    const birthTime =
-      values.birthHour !== '' && values.birthMinute !== ''
-        ? `${values.birthHour}:${values.birthMinute}`
-        : ''
+    const birthDate = combineBirthDate(values.birthYear, values.birthMonth, values.birthDay)
+    const birthTime = combineBirthTime(values.birthHour, values.birthMinute)
 
     if (
       !values.name.trim() ||
@@ -161,5 +143,3 @@ function ProfileModal({
     </div>
   )
 }
-
-export default ProfileModal
