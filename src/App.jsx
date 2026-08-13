@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import sajuCat from './assets/saju-cat.png'
+import BirthInfoFields from './BirthInfoFields'
 import { buildSajuPrompt } from './buildSajuPrompt'
+import ProfileModal from './ProfileModal'
 import {
+  deleteSajuUser,
+  fetchSajuUsers,
   getGoogleSession,
+  getUserAvatarUrl,
   getUserDisplayName,
   isSupabaseConfigured,
+  pickProfile,
   requireAuthSession,
+  saveSajuReading,
+  saveSajuUser,
   signInWithGoogle,
   signOut,
+  splitBirthDate,
+  splitBirthTime,
   supabase,
 } from './lib/supabase'
 import './App.css'
@@ -118,17 +128,25 @@ function App() {
   const [showBlessing, setShowBlessing] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [readings, setReadings] = useState([])
+  const [sajuUsers, setSajuUsers] = useState([])
   const [readingsError, setReadingsError] = useState('')
   const [selectedId, setSelectedId] = useState(null)
-  const [viewMode, setViewMode] = useState('create') // 'create' | 'saved' | 'edit'
+  const [selectedUserId, setSelectedUserId] = useState(null)
+  const [viewMode, setViewMode] = useState('create') // 'create' | 'ready' | 'saved' | 'edit'
   const [editingId, setEditingId] = useState(null)
   const [resultRevealKey, setResultRevealKey] = useState(0)
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [authBusy, setAuthBusy] = useState(false)
+  const [profileModal, setProfileModal] = useState(null) // 'onboard' | 'edit' | null
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [toast, setToast] = useState(null)
   const resultBlockRef = useRef(null)
   const selectTokenRef = useRef(0)
+  const hydratedRef = useRef(false)
+  const toastHideRef = useRef(null)
+  const toastRemoveRef = useRef(null)
 
   // select로 고른 값을 API용 문자열로 합침
   const birthDate =
@@ -140,39 +158,32 @@ function App() {
       ? `${birthHour}:${birthMinute}`
       : ''
 
-  const loadReadings = async (sessionUser = user) => {
+  const loadSajuUsers = async (sessionUser) => {
     if (!isSupabaseConfigured) {
       setReadingsError(
         'Supabase 환경변수가 없습니다. .env에 URL/키를 넣고 npm run dev를 재시작하세요.'
       )
-      setReadings([])
+      setSajuUsers([])
       return []
     }
 
     if (!sessionUser?.id) {
       setReadingsError('')
-      setReadings([])
+      setSajuUsers([])
       return []
     }
 
-    const { data, error: fetchError } = await supabase
-      .from('saju_readings')
-      .select(
-        'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
-      )
-      .eq('user_id', sessionUser.id)
-      .order('created_at', { ascending: false })
-
-    if (fetchError) {
+    try {
+      const data = await fetchSajuUsers(sessionUser.id)
+      setReadingsError('')
+      setSajuUsers(data)
+      return data
+    } catch (fetchError) {
       console.error(fetchError)
-      setReadingsError(fetchError.message || '저장된 사주를 불러오지 못했습니다.')
-      setReadings([])
+      setReadingsError(fetchError.message || '저장된 사주 정보를 불러오지 못했습니다.')
+      setSajuUsers([])
       return []
     }
-
-    setReadingsError('')
-    setReadings(data || [])
-    return data || []
   }
 
   const handleGoogleLogin = async () => {
@@ -195,7 +206,10 @@ function App() {
     try {
       await signOut()
       setUser(null)
-      setReadings([])
+      setSajuUsers([])
+      hydratedRef.current = false
+      setProfileModal(null)
+      setProfileError('')
       startNewSaju()
     } catch (authError) {
       console.error(authError)
@@ -205,29 +219,41 @@ function App() {
     }
   }
 
-  const applyReadingToForm = (reading) => {
+  const applySajuUser = (person, { openSaved = true } = {}) => {
     selectTokenRef.current += 1
-    const [y = '', m = '', d = ''] = String(reading.birth_date || '').split('-')
-    const [h = '', min = ''] = String(reading.birth_time || '').split(':')
+    const { year, month, day } = splitBirthDate(person.birth_date)
+    const { hour, minute } = splitBirthTime(person.birth_time)
+    const reading = person.latestReading
 
-    setName(reading.name || '')
-    setBirthYear(y)
-    setBirthMonth(m)
-    setBirthDay(d)
-    setBirthHour(h)
-    setBirthMinute(min)
-    setGender(reading.gender || '')
-    setCalendarType(reading.calendar_type || '')
-    setSelectedId(reading.id)
+    setName(person.name || '')
+    setBirthYear(year)
+    setBirthMonth(month)
+    setBirthDay(day)
+    setBirthHour(hour)
+    setBirthMinute(minute)
+    setGender(person.gender || '')
+    setCalendarType(person.calendar_type || '')
+    setSelectedUserId(person.id)
+    setSelectedId(reading?.id || null)
     setEditingId(null)
-    setViewMode('saved')
     setError('')
-    setSummary(reading.summary || '')
-    setResult(reading.detail || '')
-    setTodayFortune(reading.today_fortune || '')
-    setShowBlessing(
-      Boolean(reading.summary || reading.detail || reading.today_fortune)
-    )
+
+    if (openSaved && reading) {
+      setViewMode('saved')
+      setSummary(reading.summary || '')
+      setResult(reading.detail || '')
+      setTodayFortune(reading.today_fortune || '')
+      setShowBlessing(
+        Boolean(reading.summary || reading.detail || reading.today_fortune)
+      )
+    } else {
+      setViewMode(person.id ? 'ready' : 'create')
+      setSummary('')
+      setResult('')
+      setTodayFortune('')
+      setShowBlessing(false)
+    }
+
     setResultRevealKey((key) => key + 1)
 
     requestAnimationFrame(() => {
@@ -235,10 +261,46 @@ function App() {
     })
   }
 
+  const afterAuthLoad = (sessionUser, people) => {
+    if (!sessionUser) {
+      setProfileModal(null)
+      return
+    }
+
+    if (!people.length) {
+      setProfileModal('onboard')
+      return
+    }
+
+    if (hydratedRef.current) return
+    hydratedRef.current = true
+    applySajuUser(pickProfile(people))
+  }
+
   useEffect(() => {
     let cancelled = false
 
+    const readOAuthErrorFromUrl = () => {
+      const hash = window.location.hash.startsWith('#')
+        ? window.location.hash.slice(1)
+        : window.location.hash
+      const search = window.location.search.startsWith('?')
+        ? window.location.search.slice(1)
+        : window.location.search
+      const params = new URLSearchParams(hash || search)
+      const description =
+        params.get('error_description') || params.get('error') || ''
+      if (!description) return ''
+      window.history.replaceState({}, '', window.location.pathname)
+      return decodeURIComponent(description.replace(/\+/g, ' '))
+    }
+
     const bootstrap = async () => {
+      const oauthError = readOAuthErrorFromUrl()
+      if (oauthError && !cancelled) {
+        setReadingsError(oauthError)
+      }
+
       let sessionUser = null
       try {
         const session = await getGoogleSession()
@@ -252,26 +314,50 @@ function App() {
 
       if (cancelled) return
       setUser(sessionUser)
+      const people = await loadSajuUsers(sessionUser)
+      if (cancelled) return
+      afterAuthLoad(sessionUser, people)
       setAuthReady(true)
-      await loadReadings(sessionUser)
     }
 
     bootstrap()
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (cancelled) return
       const nextUser =
         session?.user && !session.user.is_anonymous ? session.user : null
       setUser(nextUser)
+
+      if (event === 'SIGNED_OUT') {
+        hydratedRef.current = false
+        setSajuUsers([])
+        setProfileModal(null)
+        setAuthReady(true)
+        return
+      }
+
+      const people = await loadSajuUsers(nextUser)
+      if (cancelled) return
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+        afterAuthLoad(nextUser, people)
+      }
       setAuthReady(true)
-      await loadReadings(nextUser)
     })
 
     return () => {
       cancelled = true
       subscription.unsubscribe()
+    }
+    // Bootstrap and auth subscription should run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(toastHideRef.current)
+      window.clearTimeout(toastRemoveRef.current)
     }
   }, [])
 
@@ -291,22 +377,43 @@ function App() {
     setShowBlessing(false)
     setError('')
     setSelectedId(null)
+    setSelectedUserId(null)
     setEditingId(null)
     setViewMode('create')
     setResultRevealKey((key) => key + 1)
   }
 
+  const showToast = (message) => {
+    window.clearTimeout(toastHideRef.current)
+    window.clearTimeout(toastRemoveRef.current)
+    setToast({ id: Date.now(), message, leaving: false })
+    toastHideRef.current = window.setTimeout(() => {
+      setToast((prev) => (prev ? { ...prev, leaving: true } : null))
+      toastRemoveRef.current = window.setTimeout(() => {
+        setToast(null)
+      }, 320)
+    }, 2200)
+  }
+
+  const handleNewSajuClick = () => {
+    if (viewMode === 'create') {
+      showToast('이미 새 사주 화면이 열려 있어요')
+      return
+    }
+    startNewSaju()
+  }
+
   const startEditReading = () => {
-    if (!selectedId) return
+    if (!selectedUserId) return
     setEditingId(selectedId)
     setViewMode('edit')
     setError('')
     setResultRevealKey((key) => key + 1)
   }
 
-  const handleDeleteReading = async (reading, event) => {
+  const handleDeleteSajuUser = async (person, event) => {
     event.stopPropagation()
-    const ok = window.confirm(`「${reading.name}」님의 저장된 사주를 삭제할까요?`)
+    const ok = window.confirm(`「${person.name}」님의 저장된 정보를 삭제할까요?`)
     if (!ok) return
 
     if (!user) {
@@ -316,32 +423,67 @@ function App() {
 
     try {
       await requireAuthSession()
-    } catch (authError) {
-      console.error(authError)
-      setReadingsError(authError.message || '로그인이 필요합니다.')
-      return
-    }
-
-    const { error: deleteError } = await supabase
-      .from('saju_readings')
-      .delete()
-      .eq('id', reading.id)
-      .eq('user_id', user.id)
-
-    if (deleteError) {
+      await deleteSajuUser({ authUserId: user.id, sajuUserId: person.id })
+    } catch (deleteError) {
       console.error(deleteError)
       setReadingsError(deleteError.message || '삭제에 실패했습니다.')
       return
     }
 
-    setReadings((prev) => prev.filter((item) => item.id !== reading.id))
-    if (selectedId === reading.id || editingId === reading.id) {
+    setSajuUsers((prev) => prev.filter((item) => item.id !== person.id))
+    if (selectedUserId === person.id) {
       startNewSaju()
     }
   }
 
-  const handleNameChange = (event) => {
-    setName(event.target.value)
+  const handleFieldChange = (field, value) => {
+    const setters = {
+      name: setName,
+      birthYear: setBirthYear,
+      birthMonth: setBirthMonth,
+      birthDay: setBirthDay,
+      birthHour: setBirthHour,
+      birthMinute: setBirthMinute,
+      gender: setGender,
+      calendarType: setCalendarType,
+    }
+    setters[field]?.(value)
+  }
+
+  const handleSaveProfile = async (profile) => {
+    setProfileSaving(true)
+    setProfileError('')
+
+    try {
+      const session = await requireAuthSession()
+      const currentProfile = pickProfile(sajuUsers)
+      const savedUser = await saveSajuUser({
+        authUserId: session.user.id,
+        sajuUserId: profileModal === 'edit' ? currentProfile?.id : null,
+        profile,
+      })
+      const previous = sajuUsers.find((item) => item.id === savedUser.id)
+      const merged = {
+        ...savedUser,
+        latestReading:
+          previous?.latestReading ||
+          (profileModal === 'edit' ? currentProfile?.latestReading : null) ||
+          null,
+      }
+
+      setSajuUsers((prev) => {
+        const without = prev.filter((item) => item.id !== savedUser.id)
+        return [merged, ...without]
+      })
+      hydratedRef.current = true
+      setProfileModal(null)
+      applySajuUser(merged)
+    } catch (saveError) {
+      console.error(saveError)
+      setProfileError(saveError.message || '프로필 저장에 실패했습니다.')
+    } finally {
+      setProfileSaving(false)
+    }
   }
 
   const handleAnalyze = async () => {
@@ -360,7 +502,19 @@ function App() {
       return
     }
 
-    const isEditing = Boolean(editingId)
+    const matchedUser =
+      selectedUserId
+        ? sajuUsers.find((item) => item.id === selectedUserId)
+        : sajuUsers.find(
+            (item) =>
+              item.name === name &&
+              item.birth_date === birthDate &&
+              String(item.birth_time || '').slice(0, 5) === birthTime &&
+              item.gender === gender &&
+              item.calendar_type === calendarType
+          )
+    const existingUserId = matchedUser?.id || null
+    const existingReadingId = editingId || selectedId || matchedUser?.latestReading?.id || null
 
     setLoading(true)
     setError('')
@@ -368,7 +522,7 @@ function App() {
     setSummary('')
     setTodayFortune('')
     setShowBlessing(false)
-    if (!isEditing) {
+    if (!existingReadingId && viewMode !== 'ready' && viewMode !== 'saved') {
       setSelectedId(null)
       setViewMode('create')
     }
@@ -393,60 +547,53 @@ function App() {
       const text = await askGemini(prompt)
       const parsed = parseSajuResponse(text)
       const session = await requireAuthSession()
-      const payload = {
-        name,
-        birth_date: birthDate,
-        birth_time: birthTime,
-        gender,
-        calendar_type: calendarType,
-        summary: parsed.summary || '',
-        detail: parsed.detail || '',
-        today_fortune: parsed.todayFortune || '',
-      }
 
-      setSummary(payload.summary)
-      setResult(payload.detail)
-      setTodayFortune(payload.today_fortune)
+      setSummary(parsed.summary || '')
+      setResult(parsed.detail || '')
+      setTodayFortune(parsed.todayFortune || '')
       setShowBlessing(true)
       setLoading(false)
 
-      const query = isEditing
-        ? supabase
-            .from('saju_readings')
-            .update(payload)
-            .eq('id', editingId)
-            .eq('user_id', session.user.id)
-            .select(
-              'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
-            )
-            .single()
-        : supabase
-            .from('saju_readings')
-            .insert({ ...payload, user_id: session.user.id })
-            .select(
-              'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
-            )
-            .single()
+      try {
+        const savedUser = await saveSajuUser({
+          authUserId: session.user.id,
+          sajuUserId: existingUserId,
+          profile: {
+            name,
+            birthDate,
+            birthTime,
+            gender,
+            calendarType,
+          },
+        })
 
-      const { data: saved, error: saveError } = await query
+        const savedReading = await saveSajuReading({
+          authUserId: session.user.id,
+          sajuUserId: savedUser.id,
+          readingId: existingReadingId,
+          result: {
+            summary: parsed.summary || '',
+            detail: parsed.detail || '',
+            todayFortune: parsed.todayFortune || '',
+          },
+        })
 
-      if (saveError) {
-        console.error(saveError)
-        setError(
-          isEditing
-            ? '사주 결과는 나왔지만 수정 저장에 실패했습니다.'
-            : '사주 결과는 나왔지만 저장에 실패했습니다.'
-        )
-      } else if (saved) {
-        setSelectedId(saved.id)
+        const merged = {
+          ...savedUser,
+          latestReading: savedReading,
+        }
+
+        setSelectedUserId(savedUser.id)
+        setSelectedId(savedReading.id)
         setEditingId(null)
         setViewMode('saved')
-        setReadings((prev) => {
-          const without = prev.filter((item) => item.id !== saved.id)
-          return [saved, ...without]
+        setSajuUsers((prev) => {
+          const without = prev.filter((item) => item.id !== savedUser.id)
+          return [merged, ...without]
         })
-      } else {
-        setViewMode('saved')
+      } catch (saveError) {
+        console.error(saveError)
+        setError('사주 결과는 나왔지만 저장에 실패했습니다.')
       }
     } catch (err) {
       console.error(err)
@@ -455,25 +602,89 @@ function App() {
     }
   }
 
+  const profile = pickProfile(sajuUsers)
+  const otherPeople = profile
+    ? sajuUsers.filter((item) => item.id !== profile.id)
+    : sajuUsers
+  const isViewingProfile = Boolean(profile && selectedUserId === profile.id)
+  const avatarUrl = getUserAvatarUrl(user)
+  const profileModalValues =
+    profileModal === 'edit' && profile
+      ? (() => {
+          const { year, month, day } = splitBirthDate(profile.birth_date)
+          const { hour, minute } = splitBirthTime(profile.birth_time)
+          return {
+            name: profile.name || '',
+            birthYear: year,
+            birthMonth: month,
+            birthDay: day,
+            birthHour: hour,
+            birthMinute: minute,
+            gender: profile.gender || '',
+            calendarType: profile.calendar_type || '',
+          }
+        })()
+      : {
+          name: getUserDisplayName(user),
+          birthYear: '',
+          birthMonth: '',
+          birthDay: '',
+          birthHour: '',
+          birthMinute: '',
+          gender: '',
+          calendarType: '',
+        }
+
   return (
     <div
       className={`layout${
         viewMode === 'saved'
           ? ' layout--saved'
-          : viewMode === 'edit'
-            ? ' layout--edit'
-            : ' layout--create'
+          : viewMode === 'ready'
+            ? ' layout--ready'
+            : viewMode === 'edit'
+              ? ' layout--edit'
+              : ' layout--create'
       }`}
     >
-      <aside className="sidebar" aria-label="저장된 사주 목록">
+      <aside className="sidebar" aria-label="프로필과 저장된 사주">
         <div className="auth-panel">
           {!authReady ? (
             <p className="auth-status">로그인 확인 중…</p>
           ) : user ? (
-            <>
-              <p className="auth-user" title={user.email || ''}>
-                {getUserDisplayName(user)}
-              </p>
+            <div className="profile-card">
+              <div className="profile-card-top">
+                {avatarUrl ? (
+                  <img className="profile-avatar" src={avatarUrl} alt="" />
+                ) : (
+                  <span className="profile-avatar profile-avatar--fallback" aria-hidden="true">
+                    {(profile?.name || getUserDisplayName(user)).slice(0, 1)}
+                  </span>
+                )}
+                <div className="profile-card-copy">
+                  <p className="auth-user" title={user.email || ''}>
+                    {profile?.name || getUserDisplayName(user)}
+                  </p>
+                  {profile ? (
+                    <p className="profile-meta">
+                      {profile.birth_date} · {String(profile.birth_time || '').slice(0, 5)} · {profile.calendar_type}
+                    </p>
+                  ) : (
+                    <p className="profile-meta">프로필을 먼저 입력해 주세요</p>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="profile-edit-btn"
+                onClick={() => {
+                  setProfileError('')
+                  setProfileModal('edit')
+                }}
+                disabled={!profile || profileModal === 'onboard'}
+              >
+                프로필 수정
+              </button>
               <button
                 type="button"
                 className="auth-logout-btn"
@@ -482,10 +693,10 @@ function App() {
               >
                 로그아웃
               </button>
-            </>
+            </div>
           ) : (
             <>
-              <p className="auth-hint">Google 계정으로 로그인하면 사주를 저장할 수 있어요.</p>
+              <p className="auth-hint">Google로 로그인하면 생년월일을 프로필에 저장하고, 바로 사주를 볼 수 있어요.</p>
               <button
                 type="button"
                 className="auth-google-btn"
@@ -498,36 +709,36 @@ function App() {
           )}
         </div>
 
-        <h2 className="sidebar-title">저장된 사주</h2>
-        <button type="button" className="new-saju-btn" onClick={startNewSaju}>
-          새 사주 만들기
+        <h2 className="sidebar-title">다른 사람</h2>
+        <button type="button" className="new-saju-btn" onClick={handleNewSajuClick}>
+          다른 사람 사주 보기
         </button>
         {readingsError ? (
           <p className="sidebar-empty sidebar-error">{readingsError}</p>
         ) : !user ? (
-          <p className="sidebar-empty">로그인 후 내 사주 목록이 여기에 표시됩니다.</p>
-        ) : readings.length === 0 ? (
-          <p className="sidebar-empty">아직 저장된 사주가 없습니다.</p>
+          <p className="sidebar-empty">로그인 후 다른 사람의 사주도 저장할 수 있습니다.</p>
+        ) : otherPeople.length === 0 ? (
+          <p className="sidebar-empty">가족이나 친구 사주는 여기에 따로 저장됩니다.</p>
         ) : (
           <ul className="sidebar-list">
-            {readings.map((reading) => (
-              <li key={reading.id} className="sidebar-row">
+            {otherPeople.map((person) => (
+              <li key={person.id} className="sidebar-row">
                 <button
                   type="button"
-                  className={`sidebar-item${selectedId === reading.id && viewMode === 'saved' ? ' sidebar-item--active' : ''}`}
-                  onClick={() => applyReadingToForm(reading)}
+                  className={`sidebar-item${selectedUserId === person.id && (viewMode === 'saved' || viewMode === 'ready') ? ' sidebar-item--active' : ''}`}
+                  onClick={() => applySajuUser(person)}
                 >
-                  <span className="sidebar-item-name">{reading.name}</span>
-                  {selectedId === reading.id && viewMode === 'saved' && (
+                  <span className="sidebar-item-name">{person.name}</span>
+                  {selectedUserId === person.id && viewMode === 'saved' && (
                     <span className="sidebar-item-badge">보는 중</span>
                   )}
                 </button>
                 <button
                   type="button"
                   className="sidebar-delete"
-                  aria-label={`${reading.name} 사주 삭제`}
+                  aria-label={`${person.name} 정보 삭제`}
                   title="삭제"
-                  onClick={(event) => handleDeleteReading(reading, event)}
+                  onClick={(event) => handleDeleteSajuUser(person, event)}
                 >
                   삭제
                 </button>
@@ -538,7 +749,7 @@ function App() {
         <button
           type="button"
           className="sidebar-refresh"
-          onClick={() => loadReadings(user)}
+          onClick={() => loadSajuUsers(user)}
           disabled={!user}
         >
           목록 새로고침
@@ -555,7 +766,7 @@ function App() {
             </div>
           </div>
           <p className="brand-tagline">
-            태어난 정보를 입력하면 사주를 해석해 드립니다.
+            프로필에 저장한 생년월일로 바로 사주를 보고, 언제든 수정할 수 있습니다.
           </p>
         </header>
 
@@ -563,50 +774,88 @@ function App() {
           <button
             type="button"
             role="tab"
-            aria-selected={viewMode === 'saved'}
-            className={`view-tab view-tab--saved${viewMode === 'saved' ? ' view-tab--active' : ''}`}
-            disabled={viewMode !== 'saved'}
+            aria-selected={viewMode === 'saved' || viewMode === 'ready'}
+            className={`view-tab view-tab--saved${viewMode === 'saved' || viewMode === 'ready' ? ' view-tab--active' : ''}`}
+            disabled={!profile}
+            onClick={() => {
+              if (profile) applySajuUser(profile)
+            }}
           >
-            <span className="view-tab-label">저장 목록</span>
-            <span className="view-tab-desc">저장된 사주를 보고 있습니다.</span>
+            <span className="view-tab-label">내 사주</span>
+            <span className="view-tab-desc">
+              {profile ? `${profile.name}님의 사주` : '프로필을 먼저 저장하세요'}
+            </span>
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={viewMode === 'create' || viewMode === 'edit'}
             className={`view-tab view-tab--create${viewMode === 'create' || viewMode === 'edit' ? ' view-tab--active' : ''}`}
-            onClick={startNewSaju}
+            onClick={handleNewSajuClick}
           >
-            <span className="view-tab-label">{viewMode === 'edit' ? '수정 중' : '새 입력'}</span>
+            <span className="view-tab-label">{viewMode === 'edit' ? '수정 중' : '다른 사람'}</span>
             <span className="view-tab-desc">
-              {viewMode === 'edit' ? '저장된 사주 수정하기' : '새로 입력하기'}
+              {viewMode === 'edit' ? '저장된 사주 수정하기' : '다른 사람 사주 보기'}
             </span>
           </button>
         </div>
 
-        {viewMode === 'saved' ? (
-          <section className="saved-view" aria-label="저장된 사주">
+        {viewMode === 'saved' || viewMode === 'ready' ? (
+          <section className="saved-view" aria-label="내 사주">
             <div className="saved-view-banner">
-              <span className="mode-chip mode-chip--saved">저장됨</span>
+              <span className={`mode-chip ${viewMode === 'saved' ? 'mode-chip--saved' : 'mode-chip--create'}`}>
+                {viewMode === 'saved' ? '저장됨' : '준비됨'}
+              </span>
               <p className="saved-view-title">
                 <span className="saved-view-name">{name}</span>
-                님의 저장된 사주
+                {isViewingProfile ? '님의 사주' : '님의 저장된 사주'}
               </p>
-              <p className="saved-view-hint">왼쪽 목록에서 다른 이름을 고르거나, 위쪽 「새로 입력하기」로 새 사주를 작성하세요.</p>
+              <p className="saved-view-hint">
+                {isViewingProfile
+                  ? '생년월일은 왼쪽 프로필에서 수정할 수 있어요. 정보는 이미 저장되어 바로 사주를 볼 수 있습니다.'
+                  : '다른 사람의 사주를 보고 있습니다. 내 사주로 돌아가려면 위쪽 「내 사주」를 누르세요.'}
+              </p>
               <div className="saved-actions">
-                <button type="button" className="saved-edit-btn" onClick={startEditReading}>
-                  이 사주 수정하기
-                </button>
                 <button
                   type="button"
-                  className="saved-delete-btn"
-                  onClick={(event) => {
-                    const reading = readings.find((item) => item.id === selectedId)
-                    if (reading) handleDeleteReading(reading, event)
-                  }}
+                  className="saved-edit-btn"
+                  onClick={handleAnalyze}
+                  disabled={loading || !user}
                 >
-                  이 사주 삭제하기
+                  {loading
+                    ? '사주 풀이 중...'
+                    : viewMode === 'ready'
+                      ? '사주 보기'
+                      : '이 정보로 다시 사주 보기'}
                 </button>
+                {isViewingProfile ? (
+                  <button
+                    type="button"
+                    className="saved-secondary-btn"
+                    onClick={() => {
+                      setProfileError('')
+                      setProfileModal('edit')
+                    }}
+                  >
+                    프로필 수정
+                  </button>
+                ) : (
+                  <>
+                    <button type="button" className="saved-secondary-btn" onClick={startEditReading}>
+                      정보 수정하기
+                    </button>
+                    <button
+                      type="button"
+                      className="saved-delete-btn"
+                      onClick={(event) => {
+                        const person = sajuUsers.find((item) => item.id === selectedUserId)
+                        if (person) handleDeleteSajuUser(person, event)
+                      }}
+                    >
+                      이 정보 삭제하기
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             <dl className="saved-meta">
@@ -627,6 +876,13 @@ function App() {
                 <dd>{calendarType || '-'}</dd>
               </div>
             </dl>
+
+            {loading && (
+              <p className="loading-text" aria-live="polite">
+                고양이가 사주보는중
+              </p>
+            )}
+            {error && <p className="error">{error}</p>}
 
             {(summary || result || todayFortune || showBlessing) && (
               <div
@@ -669,122 +925,33 @@ function App() {
         >
           <div className="create-view-banner">
             <span className={`mode-chip ${viewMode === 'edit' ? 'mode-chip--edit' : 'mode-chip--create'}`}>
-              {viewMode === 'edit' ? '수정' : '새 입력'}
+              {viewMode === 'edit' ? '수정' : '다른 사람'}
             </span>
             <p className="create-view-title">
               {viewMode === 'edit'
-                ? '저장된 사주 정보를 수정한 뒤 다시 풀이하세요'
-                : '새 사주 정보를 입력하세요'}
+                ? '다른 사람 정보를 수정한 뒤 다시 풀이하세요'
+                : '내 프로필이 아닌 다른 사람의 사주를 볼 수 있어요'}
             </p>
           </div>
-          <div className="field">
-            <label htmlFor="name">이름</label>
-            <input
-              id="name"
-              type="text"
-              placeholder="이름을 입력하세요"
-              value={name}
-              onChange={handleNameChange}
-            />
-          </div>
-
-          <div className="field">
-            <span className="field-legend">생년월일</span>
-            <div className="field-row field-row--date">
-              <select
-                aria-label="출생 연도"
-                value={birthYear}
-                onChange={(event) => setBirthYear(event.target.value)}
-              >
-                <option value="">년</option>
-                {years.map((year) => (
-                  <option key={year} value={year}>
-                    {year}년
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="출생 월"
-                value={birthMonth}
-                onChange={(event) => setBirthMonth(event.target.value)}
-              >
-                <option value="">월</option>
-                {months.map((month) => (
-                  <option key={month} value={month}>
-                    {Number(month)}월
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="출생 일"
-                value={birthDay}
-                onChange={(event) => setBirthDay(event.target.value)}
-              >
-                <option value="">일</option>
-                {days.map((day) => (
-                  <option key={day} value={day}>
-                    {Number(day)}일
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="field">
-            <span className="field-legend">태어난 시간</span>
-            <div className="field-row field-row--time">
-              <select
-                aria-label="출생 시"
-                value={birthHour}
-                onChange={(event) => setBirthHour(event.target.value)}
-              >
-                <option value="">시</option>
-                {hours.map((hour) => (
-                  <option key={hour} value={hour}>
-                    {hour}시
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="출생 분"
-                value={birthMinute}
-                onChange={(event) => setBirthMinute(event.target.value)}
-              >
-                <option value="">분</option>
-                {minutes.map((minute) => (
-                  <option key={minute} value={minute}>
-                    {minute}분
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="field">
-            <label htmlFor="gender">성별</label>
-            <select
-              id="gender"
-              value={gender}
-              onChange={(event) => setGender(event.target.value)}
-            >
-              <option value="">선택하세요</option>
-              <option value="남성">남성</option>
-              <option value="여성">여성</option>
-            </select>
-          </div>
-
-          <div className="field">
-            <label htmlFor="calendarType">양력 / 음력</label>
-            <select
-              id="calendarType"
-              value={calendarType}
-              onChange={(event) => setCalendarType(event.target.value)}
-            >
-              <option value="">선택하세요</option>
-              <option value="양력">양력</option>
-              <option value="음력">음력</option>
-            </select>
-          </div>
+          <BirthInfoFields
+            idPrefix="saju"
+            values={{
+              name,
+              birthYear,
+              birthMonth,
+              birthDay,
+              birthHour,
+              birthMinute,
+              gender,
+              calendarType,
+            }}
+            onChange={handleFieldChange}
+            years={years}
+            months={months}
+            days={days}
+            hours={hours}
+            minutes={minutes}
+          />
 
           <p className="preview">{name}님의 사주 </p>
 
@@ -839,6 +1006,42 @@ function App() {
         </form>
         )}
       </div>
+
+      {profileModal ? (
+        <ProfileModal
+          key={profileModal}
+          mode={profileModal}
+          initialValues={profileModalValues}
+          years={years}
+          months={months}
+          days={days}
+          hours={hours}
+          minutes={minutes}
+          saving={profileSaving}
+          error={profileError}
+          onSubmit={handleSaveProfile}
+          onCancel={
+            profileModal === 'edit'
+              ? () => {
+                  setProfileModal(null)
+                  setProfileError('')
+                }
+              : undefined
+          }
+          onLogout={profileModal === 'onboard' ? handleLogout : undefined}
+        />
+      ) : null}
+
+      {toast ? (
+        <div
+          key={toast.id}
+          className={`toast${toast.leaving ? ' toast--leaving' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          {toast.message}
+        </div>
+      ) : null}
     </div>
   )
 }
