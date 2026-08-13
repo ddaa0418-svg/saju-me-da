@@ -23,7 +23,7 @@ export function getShareOrigin() {
 }
 
 export function getShareUrl(readingId) {
-  return `${getShareOrigin()}/result/${readingId}`
+  return `${getShareOrigin()}/result/${readingId}?s=3`
 }
 
 function getShareCopy({ name }) {
