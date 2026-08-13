@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import sajuCat from './assets/saju-cat.png'
 import { buildSajuPrompt } from './buildSajuPrompt'
-import { isSupabaseConfigured, supabase } from './lib/supabase'
+import {
+  getGoogleSession,
+  getUserDisplayName,
+  isSupabaseConfigured,
+  requireAuthSession,
+  signInWithGoogle,
+  signOut,
+  supabase,
+} from './lib/supabase'
 import './App.css'
 
 // .env의 VITE_GEMINI_API_KEY 사용 (Vite는 VITE_ 접두사만 프론트에 노출)
@@ -116,6 +124,9 @@ function App() {
   const [viewMode, setViewMode] = useState('create') // 'create' | 'saved' | 'edit'
   const [editingId, setEditingId] = useState(null)
   const [resultRevealKey, setResultRevealKey] = useState(0)
+  const [user, setUser] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [authBusy, setAuthBusy] = useState(false)
   const resultBlockRef = useRef(null)
   const selectTokenRef = useRef(0)
 
@@ -129,13 +140,19 @@ function App() {
       ? `${birthHour}:${birthMinute}`
       : ''
 
-  const loadReadings = async () => {
+  const loadReadings = async (sessionUser = user) => {
     if (!isSupabaseConfigured) {
       setReadingsError(
         'Supabase 환경변수가 없습니다. .env에 URL/키를 넣고 npm run dev를 재시작하세요.'
       )
       setReadings([])
-      return
+      return []
+    }
+
+    if (!sessionUser?.id) {
+      setReadingsError('')
+      setReadings([])
+      return []
     }
 
     const { data, error: fetchError } = await supabase
@@ -143,27 +160,55 @@ function App() {
       .select(
         'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
       )
+      .eq('user_id', sessionUser.id)
       .order('created_at', { ascending: false })
 
     if (fetchError) {
       console.error(fetchError)
       setReadingsError(fetchError.message || '저장된 사주를 불러오지 못했습니다.')
       setReadings([])
-      return
+      return []
     }
 
     setReadingsError('')
     setReadings(data || [])
+    return data || []
   }
 
-  useEffect(() => {
-    loadReadings()
-  }, [])
+  const handleGoogleLogin = async () => {
+    setAuthBusy(true)
+    setError('')
+    setReadingsError('')
+    try {
+      await signInWithGoogle()
+    } catch (authError) {
+      console.error(authError)
+      setReadingsError(authError.message || 'Google 로그인에 실패했습니다.')
+      setAuthBusy(false)
+    }
+  }
 
-  const applyReadingToForm = async (reading) => {
-    const token = ++selectTokenRef.current
-    const [y = '', m = '', d = ''] = (reading.birth_date || '').split('-')
-    const [h = '', min = ''] = (reading.birth_time || '').split(':')
+  const handleLogout = async () => {
+    setAuthBusy(true)
+    setError('')
+    setReadingsError('')
+    try {
+      await signOut()
+      setUser(null)
+      setReadings([])
+      startNewSaju()
+    } catch (authError) {
+      console.error(authError)
+      setReadingsError(authError.message || '로그아웃에 실패했습니다.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  const applyReadingToForm = (reading) => {
+    selectTokenRef.current += 1
+    const [y = '', m = '', d = ''] = String(reading.birth_date || '').split('-')
+    const [h = '', min = ''] = String(reading.birth_time || '').split(':')
 
     setName(reading.name || '')
     setBirthYear(y)
@@ -177,35 +222,58 @@ function App() {
     setEditingId(null)
     setViewMode('saved')
     setError('')
-    setSummary('')
-    setResult('')
-    setTodayFortune('')
-    setShowBlessing(false)
+    setSummary(reading.summary || '')
+    setResult(reading.detail || '')
+    setTodayFortune(reading.today_fortune || '')
+    setShowBlessing(
+      Boolean(reading.summary || reading.detail || reading.today_fortune)
+    )
     setResultRevealKey((key) => key + 1)
 
     requestAnimationFrame(() => {
       resultBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     })
-
-    // 저장된 결과도 빠르게 복원
-    if (reading.summary) {
-      if (token !== selectTokenRef.current) return
-      setSummary(reading.summary)
-    }
-
-    if (reading.detail) {
-      if (token !== selectTokenRef.current) return
-      setResult(reading.detail)
-    }
-
-    if (reading.today_fortune) {
-      if (token !== selectTokenRef.current) return
-      setTodayFortune(reading.today_fortune)
-    }
-
-    if (token !== selectTokenRef.current) return
-    setShowBlessing(Boolean(reading.summary || reading.detail || reading.today_fortune))
   }
+
+  useEffect(() => {
+    let cancelled = false
+
+    const bootstrap = async () => {
+      let sessionUser = null
+      try {
+        const session = await getGoogleSession()
+        sessionUser = session?.user || null
+      } catch (authError) {
+        console.error(authError)
+        if (!cancelled) {
+          setReadingsError(authError.message || '로그인 상태를 확인하지 못했습니다.')
+        }
+      }
+
+      if (cancelled) return
+      setUser(sessionUser)
+      setAuthReady(true)
+      await loadReadings(sessionUser)
+    }
+
+    bootstrap()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (cancelled) return
+      const nextUser =
+        session?.user && !session.user.is_anonymous ? session.user : null
+      setUser(nextUser)
+      setAuthReady(true)
+      await loadReadings(nextUser)
+    })
+
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
+  }, [])
 
   const startNewSaju = () => {
     selectTokenRef.current += 1
@@ -241,10 +309,24 @@ function App() {
     const ok = window.confirm(`「${reading.name}」님의 저장된 사주를 삭제할까요?`)
     if (!ok) return
 
+    if (!user) {
+      setReadingsError('삭제는 Google 로그인 후 가능합니다.')
+      return
+    }
+
+    try {
+      await requireAuthSession()
+    } catch (authError) {
+      console.error(authError)
+      setReadingsError(authError.message || '로그인이 필요합니다.')
+      return
+    }
+
     const { error: deleteError } = await supabase
       .from('saju_readings')
       .delete()
       .eq('id', reading.id)
+      .eq('user_id', user.id)
 
     if (deleteError) {
       console.error(deleteError)
@@ -270,6 +352,11 @@ function App() {
 
     if (!API_KEY) {
       setError('.env에 VITE_GEMINI_API_KEY가 없습니다. 서버를 재시작해 보세요.')
+      return
+    }
+
+    if (!user) {
+      setError('사주를 저장하려면 Google로 로그인해 주세요.')
       return
     }
 
@@ -305,6 +392,7 @@ function App() {
 
       const text = await askGemini(prompt)
       const parsed = parseSajuResponse(text)
+      const session = await requireAuthSession()
       const payload = {
         name,
         birth_date: birthDate,
@@ -327,13 +415,14 @@ function App() {
             .from('saju_readings')
             .update(payload)
             .eq('id', editingId)
+            .eq('user_id', session.user.id)
             .select(
               'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
             )
             .single()
         : supabase
             .from('saju_readings')
-            .insert(payload)
+            .insert({ ...payload, user_id: session.user.id })
             .select(
               'id, name, birth_date, birth_time, gender, calendar_type, summary, detail, today_fortune, created_at'
             )
@@ -377,12 +466,46 @@ function App() {
       }`}
     >
       <aside className="sidebar" aria-label="저장된 사주 목록">
+        <div className="auth-panel">
+          {!authReady ? (
+            <p className="auth-status">로그인 확인 중…</p>
+          ) : user ? (
+            <>
+              <p className="auth-user" title={user.email || ''}>
+                {getUserDisplayName(user)}
+              </p>
+              <button
+                type="button"
+                className="auth-logout-btn"
+                onClick={handleLogout}
+                disabled={authBusy}
+              >
+                로그아웃
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="auth-hint">Google 계정으로 로그인하면 사주를 저장할 수 있어요.</p>
+              <button
+                type="button"
+                className="auth-google-btn"
+                onClick={handleGoogleLogin}
+                disabled={authBusy || !isSupabaseConfigured}
+              >
+                {authBusy ? '이동 중…' : 'Google로 로그인'}
+              </button>
+            </>
+          )}
+        </div>
+
         <h2 className="sidebar-title">저장된 사주</h2>
         <button type="button" className="new-saju-btn" onClick={startNewSaju}>
           새 사주 만들기
         </button>
         {readingsError ? (
           <p className="sidebar-empty sidebar-error">{readingsError}</p>
+        ) : !user ? (
+          <p className="sidebar-empty">로그인 후 내 사주 목록이 여기에 표시됩니다.</p>
         ) : readings.length === 0 ? (
           <p className="sidebar-empty">아직 저장된 사주가 없습니다.</p>
         ) : (
@@ -412,7 +535,12 @@ function App() {
             ))}
           </ul>
         )}
-        <button type="button" className="sidebar-refresh" onClick={loadReadings}>
+        <button
+          type="button"
+          className="sidebar-refresh"
+          onClick={() => loadReadings(user)}
+          disabled={!user}
+        >
           목록 새로고침
         </button>
       </aside>
@@ -660,9 +788,11 @@ function App() {
 
           <p className="preview">{name}님의 사주 </p>
 
-          <button className="analyze-btn" type="submit" disabled={loading}>
+          <button className="analyze-btn" type="submit" disabled={loading || !user}>
             {loading
               ? '사주 풀이 중...'
+              : !user
+                ? 'Google 로그인 후 사주 보기'
               : viewMode === 'edit'
                 ? '다시 풀이하고 수정 저장'
                 : '사주 보기'}
