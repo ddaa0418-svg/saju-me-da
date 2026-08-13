@@ -1,0 +1,24 @@
+{
+  "name": "사주미",
+  "short_name": "사주미",
+  "description": "AI로 사주를 해석해 주는 사주미",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4effa",
+  "theme_color": "#6b3fa0",
+  "lang": "ko-KR",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "500x500",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

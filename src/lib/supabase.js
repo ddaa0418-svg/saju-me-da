@@ -41,14 +41,7 @@ function getAuthRedirectTo() {
   return window.location.origin
 }
 
-function isGoogleUser(user) {
-  if (!user || user.is_anonymous) return false
-  const providers = user.app_metadata?.providers
-  if (Array.isArray(providers) && providers.includes('google')) return true
-  return user.app_metadata?.provider === 'google'
-}
-
-/** Current session if the user signed in with Google. */
+/** Current authenticated session (Google login). */
 export async function getGoogleSession() {
   if (!isSupabaseConfigured) return null
 
@@ -64,18 +57,24 @@ export async function getGoogleSession() {
     return null
   }
 
-  if (!session?.user || !isGoogleUser(session.user)) return null
+  if (!session?.user) return null
   return session
 }
 
-/** Require a Google-authenticated session for save/update/delete. */
+/** Require an authenticated session for save/update/delete. */
 export async function requireAuthSession() {
   if (!isSupabaseConfigured) {
     throw new Error('Supabase 환경변수가 설정되지 않았습니다.')
   }
 
-  const session = await getGoogleSession()
-  if (!session) {
+  const {
+    data: { session },
+    error,
+  } = await supabase.auth.getSession()
+
+  if (error) throw error
+
+  if (!session?.user || session.user.is_anonymous) {
     throw new Error('Google 로그인이 필요합니다.')
   }
 

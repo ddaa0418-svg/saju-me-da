@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import sajuCat from './assets/saju-cat.png'
+import bakingCat from './assets/saju-cat-baking.png'
 import BirthInfoFields from './BirthInfoFields'
 import { buildSajuPrompt } from './buildSajuPrompt'
 import ProfileModal from './ProfileModal'
@@ -88,18 +89,213 @@ function parseSajuResponse(text) {
   }
 }
 
-// 사주 해석 옆 — 사주 보는 귀여운 고양이
-function SajuCat({ loading }) {
+const GUEST_DRAFT_KEY = 'sajumi-guest-draft'
+const DETAIL_HEADINGS = [
+  '성격 및 기질 분석',
+  '특이한 점',
+  '솔직한 약점',
+  '돋보이는 결정적 재능',
+  '해석을 마치며...',
+]
+
+function readGuestDraft() {
+  try {
+    const raw = sessionStorage.getItem(GUEST_DRAFT_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function persistGuestDraft(draft) {
+  try {
+    sessionStorage.setItem(GUEST_DRAFT_KEY, JSON.stringify(draft))
+  } catch {
+    // Safari private mode 등에서 sessionStorage가 막힐 수 있다.
+  }
+}
+
+function clearGuestDraft() {
+  try {
+    sessionStorage.removeItem(GUEST_DRAFT_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+function draftBirthDate(draft) {
+  return draft?.birthYear && draft?.birthMonth && draft?.birthDay
+    ? `${draft.birthYear}-${draft.birthMonth}-${draft.birthDay}`
+    : ''
+}
+
+function draftBirthTime(draft) {
+  return draft?.birthHour !== '' && draft?.birthMinute !== ''
+    ? `${draft.birthHour}:${draft.birthMinute}`
+    : ''
+}
+
+function splitLockedDetail(detail) {
+  const text = String(detail || '').trim()
+  if (!text) return { preview: '', locked: '' }
+
+  const positions = DETAIL_HEADINGS.map((heading) => ({
+    heading,
+    index: text.indexOf(heading),
+  }))
+    .filter((item) => item.index >= 0)
+    .sort((a, b) => a.index - b.index)
+
+  if (positions.length >= 3) {
+    const cut = positions[2].index
+    return {
+      preview: text.slice(0, cut).trim(),
+      locked: text.slice(cut).trim(),
+    }
+  }
+
+  const mid = Math.max(80, Math.floor(text.length * 0.45))
+  const newlineCut = text.indexOf('\n', mid)
+  const cut = newlineCut >= 0 ? newlineCut : mid
+  return {
+    preview: text.slice(0, cut).trim(),
+    locked: text.slice(cut).trim(),
+  }
+}
+
+const LOADING_LINES = [
+  '식빵 굽는 중. 사주도 같이 익히는 중이다냥.',
+  '오븐 예열 끝. 명식부터 정리한다.',
+  '겉은 바삭하게, 해석은 팩트로. 조금만 기다려.',
+]
+
+function BrandMascot() {
   return (
-    <span className={`brand-cat-wrap${loading ? ' brand-cat-wrap--loading' : ''}`}>
+    <div className="brand-mascot">
       <img
-        className="brand-cat"
+        className="brand-mascot-img"
         src={sajuCat}
-        alt="사주를 보는 귀여운 고양이"
-        width={48}
-        height={48}
+        alt="사주 해석 전문 뚱냥이"
+        width={360}
+        height={360}
       />
-    </span>
+    </div>
+  )
+}
+
+function LoadingOven() {
+  const [lineIndex, setLineIndex] = useState(0)
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setLineIndex((prev) => (prev + 1) % LOADING_LINES.length)
+    }, 2400)
+    return () => window.clearInterval(id)
+  }, [])
+
+  return (
+    <div className="loading-oven" aria-live="polite" aria-busy="true">
+      <div className="loading-oven-stage">
+        <span className="loading-oven-glow" aria-hidden="true" />
+        <span className="loading-oven-steam" aria-hidden="true" />
+        <span className="loading-oven-steam loading-oven-steam--delay" aria-hidden="true" />
+        <img
+          className="loading-oven-cat"
+          src={bakingCat}
+          alt=""
+          width={280}
+          height={280}
+        />
+      </div>
+      <p className="loading-text">{LOADING_LINES[lineIndex]}</p>
+    </div>
+  )
+}
+
+function ResultPanel({
+  name,
+  summary,
+  result,
+  todayFortune,
+  showBlessing,
+  resultBlockRef,
+  locked,
+  onLogin,
+  authBusy,
+  loginDisabled,
+}) {
+  if (!(summary || result || todayFortune || showBlessing)) return null
+
+  const { preview, locked: lockedDetail } = splitLockedDetail(result)
+  const visibleDetail = locked ? preview || result : result
+
+  return (
+    <div className="result-block" ref={resultBlockRef} aria-live="polite">
+      {summary && (
+        <p className="summary reveal-item">
+          <span className="summary-label">한줄 요약</span>
+          {summary}
+        </p>
+      )}
+      {visibleDetail && (
+        <div className="result reveal-item">
+          <span className="summary-label">{locked ? '해석 미리보기' : '전체 해석'}</span>
+          {visibleDetail}
+        </div>
+      )}
+      {locked ? (
+        <div className="result-lock reveal-item">
+          <div className="result-lock-preview" aria-hidden="true">
+            {lockedDetail ? (
+              <div className="result result--teaser">
+                <span className="summary-label">이어서</span>
+                {lockedDetail}
+              </div>
+            ) : null}
+            {todayFortune ? (
+              <p className="today-fortune">
+                <span className="summary-label">오늘의 운세</span>
+                {todayFortune}
+              </p>
+            ) : (
+              <p className="today-fortune">
+                <span className="summary-label">오늘의 운세</span>
+                잠긴 운세 문장. 로그인하면 약점과 재능까지 이어서 본다.
+              </p>
+            )}
+          </div>
+          <div className="result-lock-overlay">
+            <p className="result-lock-kicker">나머지 절반</p>
+            <p className="result-lock-title">여기부터는 로그인해야 본다냥.</p>
+            <p className="result-lock-copy">
+              솔직한 약점, 결정적 재능, 오늘의 운세가 잠겨 있다.
+            </p>
+            <button
+              type="button"
+              className="result-lock-btn"
+              onClick={onLogin}
+              disabled={authBusy || loginDisabled}
+            >
+              {authBusy ? '이동 중…' : 'Google로 로그인하고 이어서 보기'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {todayFortune && (
+            <p className="today-fortune reveal-item">
+              <span className="summary-label">오늘의 운세</span>
+              {todayFortune}
+            </p>
+          )}
+          {showBlessing && name && (
+            <p className="blessing reveal-item">
+              {name}, 해석은 끝났다. 나머지는 네가 하면 된다냥.
+            </p>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
@@ -147,6 +343,7 @@ function App() {
   const hydratedRef = useRef(false)
   const toastHideRef = useRef(null)
   const toastRemoveRef = useRef(null)
+  const pendingGuestDraftRef = useRef(null)
 
   // select로 고른 값을 API용 문자열로 합침
   const birthDate =
@@ -186,7 +383,110 @@ function App() {
     }
   }
 
+  const captureGuestDraft = (overrides = {}) => ({
+    name,
+    birthYear,
+    birthMonth,
+    birthDay,
+    birthHour,
+    birthMinute,
+    gender,
+    calendarType,
+    summary,
+    result,
+    todayFortune,
+    showBlessing,
+    viewMode,
+    ...overrides,
+  })
+
+  const applyGuestDraft = (draft) => {
+    if (!draft) return
+    selectTokenRef.current += 1
+    setName(draft.name || '')
+    setBirthYear(draft.birthYear || '')
+    setBirthMonth(draft.birthMonth || '')
+    setBirthDay(draft.birthDay || '')
+    setBirthHour(draft.birthHour || '')
+    setBirthMinute(draft.birthMinute || '')
+    setGender(draft.gender || '')
+    setCalendarType(draft.calendarType || '')
+    setSummary(draft.summary || '')
+    setResult(draft.result || '')
+    setTodayFortune(draft.todayFortune || '')
+    setShowBlessing(
+      Boolean(draft.showBlessing || draft.summary || draft.result || draft.todayFortune)
+    )
+    setSelectedId(null)
+    setSelectedUserId(null)
+    setEditingId(null)
+    setViewMode('create')
+    setError('')
+    setResultRevealKey((key) => key + 1)
+  }
+
+  const persistPendingReading = async (sessionUser, people, draft) => {
+    if (!sessionUser?.id || !(draft?.summary || draft?.result || draft?.todayFortune)) {
+      return null
+    }
+
+    const birthDateValue = draftBirthDate(draft)
+    const birthTimeValue = draftBirthTime(draft)
+    if (!draft.name || !birthDateValue || !birthTimeValue || !draft.gender || !draft.calendarType) {
+      return null
+    }
+
+    const matched =
+      (people || []).find(
+        (item) =>
+          item.name === draft.name &&
+          item.birth_date === birthDateValue &&
+          String(item.birth_time || '').slice(0, 5) === birthTimeValue &&
+          item.gender === draft.gender &&
+          item.calendar_type === draft.calendarType
+      ) || null
+
+    const savedUser = await saveSajuUser({
+      authUserId: sessionUser.id,
+      sajuUserId: matched?.id || null,
+      profile: {
+        name: draft.name,
+        birthDate: birthDateValue,
+        birthTime: birthTimeValue,
+        gender: draft.gender,
+        calendarType: draft.calendarType,
+      },
+    })
+
+    const savedReading = await saveSajuReading({
+      authUserId: sessionUser.id,
+      sajuUserId: savedUser.id,
+      readingId: matched?.latestReading?.id || null,
+      result: {
+        summary: draft.summary || '',
+        detail: draft.result || '',
+        todayFortune: draft.todayFortune || '',
+      },
+    })
+
+    const merged = {
+      ...savedUser,
+      latestReading: savedReading,
+    }
+
+    setSajuUsers((prev) => {
+      const without = prev.filter((item) => item.id !== savedUser.id)
+      return [merged, ...without]
+    })
+    pendingGuestDraftRef.current = null
+    clearGuestDraft()
+    return merged
+  }
+
   const handleGoogleLogin = async () => {
+    const draft = captureGuestDraft()
+    pendingGuestDraftRef.current = draft
+    persistGuestDraft(draft)
     setAuthBusy(true)
     setError('')
     setReadingsError('')
@@ -262,8 +562,42 @@ function App() {
   }
 
   const afterAuthLoad = (sessionUser, people) => {
+    const pendingDraft = pendingGuestDraftRef.current || readGuestDraft()
+    const hasPendingResult = Boolean(
+      pendingDraft?.summary || pendingDraft?.result || pendingDraft?.todayFortune
+    )
+
     if (!sessionUser) {
       setProfileModal(null)
+      if (hasPendingResult) {
+        pendingGuestDraftRef.current = pendingDraft
+        applyGuestDraft(pendingDraft)
+      }
+      return
+    }
+
+    if (hasPendingResult) {
+      pendingGuestDraftRef.current = pendingDraft
+      applyGuestDraft(pendingDraft)
+      hydratedRef.current = true
+      void persistPendingReading(sessionUser, people, pendingDraft)
+        .then((merged) => {
+          if (merged) {
+            setProfileModal(null)
+            applySajuUser(merged)
+            return
+          }
+          if (!people.length) setProfileModal('onboard')
+        })
+        .catch((saveError) => {
+          console.error(saveError)
+          if (!people.length) setProfileModal('onboard')
+          setError(
+            saveError?.message
+              ? `해석은 나왔다. 저장만 실패했다: ${saveError.message}`
+              : '해석은 나왔다. 저장만 실패했다.'
+          )
+        })
       return
     }
 
@@ -381,6 +715,8 @@ function App() {
     setEditingId(null)
     setViewMode('create')
     setResultRevealKey((key) => key + 1)
+    pendingGuestDraftRef.current = null
+    clearGuestDraft()
   }
 
   const showToast = (message) => {
@@ -397,7 +733,7 @@ function App() {
 
   const handleNewSajuClick = () => {
     if (viewMode === 'create') {
-      showToast('이미 새 사주 화면이 열려 있어요')
+      showToast('이미 새 사주 화면이다냥.')
       return
     }
     startNewSaju()
@@ -413,7 +749,7 @@ function App() {
 
   const handleDeleteSajuUser = async (person, event) => {
     event.stopPropagation()
-    const ok = window.confirm(`「${person.name}」님의 저장된 정보를 삭제할까요?`)
+    const ok = window.confirm(`「${person.name}」 정보 삭제한다. 되돌릴 수 없다.`)
     if (!ok) return
 
     if (!user) {
@@ -477,7 +813,24 @@ function App() {
       })
       hydratedRef.current = true
       setProfileModal(null)
-      applySajuUser(merged)
+
+      const pending = pendingGuestDraftRef.current || readGuestDraft()
+      if (pending?.summary || pending?.result || pending?.todayFortune) {
+        try {
+          const savedReadingUser = await persistPendingReading(
+            session.user,
+            [merged, ...sajuUsers.filter((item) => item.id !== savedUser.id)],
+            pending
+          )
+          applySajuUser(savedReadingUser || merged)
+        } catch (pendingError) {
+          console.error(pendingError)
+          applyGuestDraft(pending)
+          setError('해석은 나왔다. 저장만 실패했다.')
+        }
+      } else {
+        applySajuUser(merged)
+      }
     } catch (saveError) {
       console.error(saveError)
       setProfileError(saveError.message || '프로필 저장에 실패했습니다.')
@@ -488,17 +841,12 @@ function App() {
 
   const handleAnalyze = async () => {
     if (!name || !birthDate || !birthTime || !gender || !calendarType) {
-      setError('이름, 생년월일, 시간, 성별, 양력/음력을 모두 입력해 주세요.')
+      setError('이름, 생년월일, 시간, 성별, 양력/음력. 빠진 게 있다.')
       return
     }
 
     if (!API_KEY) {
       setError('.env에 VITE_GEMINI_API_KEY가 없습니다. 서버를 재시작해 보세요.')
-      return
-    }
-
-    if (!user) {
-      setError('사주를 저장하려면 Google로 로그인해 주세요.')
       return
     }
 
@@ -546,15 +894,33 @@ function App() {
 
       const text = await askGemini(prompt)
       const parsed = parseSajuResponse(text)
-      const session = await requireAuthSession()
 
       setSummary(parsed.summary || '')
       setResult(parsed.detail || '')
       setTodayFortune(parsed.todayFortune || '')
       setShowBlessing(true)
       setLoading(false)
+      setResultRevealKey((key) => key + 1)
+
+      requestAnimationFrame(() => {
+        resultBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+
+      if (!user) {
+        const draft = captureGuestDraft({
+          summary: parsed.summary || '',
+          result: parsed.detail || '',
+          todayFortune: parsed.todayFortune || '',
+          showBlessing: true,
+          viewMode: 'create',
+        })
+        pendingGuestDraftRef.current = draft
+        persistGuestDraft(draft)
+        return
+      }
 
       try {
+        const session = await requireAuthSession()
         const savedUser = await saveSajuUser({
           authUserId: session.user.id,
           sajuUserId: existingUserId,
@@ -593,11 +959,15 @@ function App() {
         })
       } catch (saveError) {
         console.error(saveError)
-        setError('사주 결과는 나왔지만 저장에 실패했습니다.')
+        setError(
+          saveError?.message
+            ? `해석은 나왔다. 저장만 실패했다: ${saveError.message}`
+            : '해석은 나왔다. 저장만 실패했다.'
+        )
       }
     } catch (err) {
       console.error(err)
-      setError(err.message || '사주 분석 중 오류가 발생했습니다.')
+      setError(err.message || '사주 분석이 중간에 끊겼다.')
       setLoading(false)
     }
   }
@@ -608,6 +978,7 @@ function App() {
     : sajuUsers
   const isViewingProfile = Boolean(profile && selectedUserId === profile.id)
   const avatarUrl = getUserAvatarUrl(user)
+  const resultLocked = Boolean(!user && (summary || result || todayFortune))
   const profileModalValues =
     profileModal === 'edit' && profile
       ? (() => {
@@ -670,7 +1041,7 @@ function App() {
                       {profile.birth_date} · {String(profile.birth_time || '').slice(0, 5)} · {profile.calendar_type}
                     </p>
                   ) : (
-                    <p className="profile-meta">프로필을 먼저 입력해 주세요</p>
+                    <p className="profile-meta">프로필부터 입력해라</p>
                   )}
                 </div>
               </div>
@@ -696,10 +1067,12 @@ function App() {
             </div>
           ) : (
             <>
-              <p className="auth-hint">Google로 로그인하면 생년월일을 프로필에 저장하고, 바로 사주를 볼 수 있어요.</p>
+              <p className="auth-hint">
+                사주는 로그인 없이 된다. 저장하고 나머지를 보려면 그때 로그인해라냥.
+              </p>
               <button
                 type="button"
-                className="auth-google-btn"
+                className="auth-google-btn auth-google-btn--quiet"
                 onClick={handleGoogleLogin}
                 disabled={authBusy || !isSupabaseConfigured}
               >
@@ -716,9 +1089,9 @@ function App() {
         {readingsError ? (
           <p className="sidebar-empty sidebar-error">{readingsError}</p>
         ) : !user ? (
-          <p className="sidebar-empty">로그인 후 다른 사람의 사주도 저장할 수 있습니다.</p>
+          <p className="sidebar-empty">로그인하면 다른 사람 사주도 여기에 남는다.</p>
         ) : otherPeople.length === 0 ? (
-          <p className="sidebar-empty">가족이나 친구 사주는 여기에 따로 저장됩니다.</p>
+          <p className="sidebar-empty">가족·친구 사주는 여기에 따로 둔다.</p>
         ) : (
           <ul className="sidebar-list">
             {otherPeople.map((person) => (
@@ -758,15 +1131,12 @@ function App() {
 
       <div className="app">
         <header className="brand">
-          <div className="brand-row">
-            <div className="brand-spacer" aria-hidden="true" />
-            <h1>사주 해석</h1>
-            <div className="brand-side">
-              <SajuCat loading={loading} />
-            </div>
-          </div>
+          {loading ? null : <BrandMascot />}
+          <h1>사주미</h1>
           <p className="brand-tagline">
-            프로필에 저장한 생년월일로 바로 사주를 보고, 언제든 수정할 수 있습니다.
+            {loading
+              ? '식빵이 익는 동안 명식을 세운다.'
+              : '사주? 내 전문이지. 돌려 말하지 않는다.'}
           </p>
         </header>
 
@@ -783,7 +1153,7 @@ function App() {
           >
             <span className="view-tab-label">내 사주</span>
             <span className="view-tab-desc">
-              {profile ? `${profile.name}님의 사주` : '프로필을 먼저 저장하세요'}
+              {profile ? `${profile.name}의 사주` : '프로필부터 저장해라'}
             </span>
           </button>
           <button
@@ -812,8 +1182,8 @@ function App() {
               </p>
               <p className="saved-view-hint">
                 {isViewingProfile
-                  ? '생년월일은 왼쪽 프로필에서 수정할 수 있어요. 정보는 이미 저장되어 바로 사주를 볼 수 있습니다.'
-                  : '다른 사람의 사주를 보고 있습니다. 내 사주로 돌아가려면 위쪽 「내 사주」를 누르세요.'}
+                  ? '정보는 이미 있다. 사주만 보면 된다.'
+                  : '다른 사람 사주다. 내 걸로 돌아가려면 「내 사주」를 눌러라.'}
               </p>
               <div className="saved-actions">
                 <button
@@ -823,10 +1193,10 @@ function App() {
                   disabled={loading || !user}
                 >
                   {loading
-                    ? '사주 풀이 중...'
+                    ? '식빵 굽는 중...'
                     : viewMode === 'ready'
                       ? '사주 보기'
-                      : '이 정보로 다시 사주 보기'}
+                      : '이 정보로 다시 본다'}
                 </button>
                 {isViewingProfile ? (
                   <button
@@ -858,6 +1228,7 @@ function App() {
                 )}
               </div>
             </div>
+            {loading && <LoadingOven />}
             <dl className="saved-meta">
               <div>
                 <dt>생년월일</dt>
@@ -877,42 +1248,22 @@ function App() {
               </div>
             </dl>
 
-            {loading && (
-              <p className="loading-text" aria-live="polite">
-                고양이가 사주보는중
-              </p>
-            )}
             {error && <p className="error">{error}</p>}
 
-            {(summary || result || todayFortune || showBlessing) && (
-              <div
+            {!loading && (
+              <ResultPanel
                 key={resultRevealKey}
-                className="result-block"
-                ref={resultBlockRef}
-                aria-live="polite"
-              >
-                {summary && (
-                  <p className="summary reveal-item">
-                    <span className="summary-label">한줄 요약</span>
-                    {summary}
-                  </p>
-                )}
-                {result && (
-                  <div className="result reveal-item">
-                    <span className="summary-label">상세 해석</span>
-                    {result}
-                  </div>
-                )}
-                {todayFortune && (
-                  <p className="today-fortune reveal-item">
-                    <span className="summary-label">오늘의 운세</span>
-                    {todayFortune}
-                  </p>
-                )}
-                {showBlessing && name && (
-                  <p className="blessing reveal-item">{name}님 행운을 빌어요 🍀</p>
-                )}
-              </div>
+                name={name}
+                summary={summary}
+                result={result}
+                todayFortune={todayFortune}
+                showBlessing={showBlessing}
+                resultBlockRef={resultBlockRef}
+                locked={resultLocked}
+                onLogin={handleGoogleLogin}
+                authBusy={authBusy}
+                loginDisabled={!isSupabaseConfigured}
+              />
             )}
           </section>
         ) : (
@@ -929,8 +1280,8 @@ function App() {
             </span>
             <p className="create-view-title">
               {viewMode === 'edit'
-                ? '다른 사람 정보를 수정한 뒤 다시 풀이하세요'
-                : '내 프로필이 아닌 다른 사람의 사주를 볼 수 있어요'}
+                ? '정보 고친 뒤 다시 풀이한다.'
+                : '내 프로필이 아니다. 정보는 정확히 넣어라.'}
             </p>
           </div>
           <BirthInfoFields
@@ -955,53 +1306,32 @@ function App() {
 
           <p className="preview">{name}님의 사주 </p>
 
-          <button className="analyze-btn" type="submit" disabled={loading || !user}>
+          <button className="analyze-btn" type="submit" disabled={loading}>
             {loading
-              ? '사주 풀이 중...'
-              : !user
-                ? 'Google 로그인 후 사주 보기'
+              ? '식빵 굽는 중...'
               : viewMode === 'edit'
                 ? '다시 풀이하고 수정 저장'
                 : '사주 보기'}
           </button>
 
-          {loading && (
-            <p className="loading-text" aria-live="polite">
-              고양이가 사주보는중
-            </p>
-          )}
+          {loading && <LoadingOven />}
 
           {error && <p className="error">{error}</p>}
 
-          {(summary || result || todayFortune || showBlessing) && (
-            <div
+          {!loading && (
+            <ResultPanel
               key={resultRevealKey}
-              className="result-block"
-              ref={resultBlockRef}
-              aria-live="polite"
-            >
-              {summary && (
-                <p className="summary reveal-item">
-                  <span className="summary-label">한줄 요약</span>
-                  {summary}
-                </p>
-              )}
-              {result && (
-                <div className="result reveal-item">
-                  <span className="summary-label">상세 해석</span>
-                  {result}
-                </div>
-              )}
-              {todayFortune && (
-                <p className="today-fortune reveal-item">
-                  <span className="summary-label">오늘의 운세</span>
-                  {todayFortune}
-                </p>
-              )}
-              {showBlessing && name && (
-                <p className="blessing reveal-item">{name}님 행운을 빌어요 🍀</p>
-              )}
-            </div>
+              name={name}
+              summary={summary}
+              result={result}
+              todayFortune={todayFortune}
+              showBlessing={showBlessing}
+              resultBlockRef={resultBlockRef}
+              locked={resultLocked}
+              onLogin={handleGoogleLogin}
+              authBusy={authBusy}
+              loginDisabled={!isSupabaseConfigured}
+            />
           )}
         </form>
         )}
