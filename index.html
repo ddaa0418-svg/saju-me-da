@@ -1,13 +1,24 @@
 <!doctype html>
 <html lang="ko">
   <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-KP26NE8ZFT"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-KP26NE8ZFT', {
+        send_page_view: !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+      });
+    </script>
+
     <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
     />
 
-    <title>사주미 | AI 사주 해석</title>
+    <title>사주 해석</title>
     <meta
       name="description"
       content="사주미는 생년월일과 태어난 시간으로 사주를 해석해 주는 AI 사주 서비스입니다. 한줄 요약, 상세 해석, 오늘의 운세를 바로 확인하세요."
@@ -37,7 +48,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="ko_KR" />
     <meta property="og:site_name" content="사주미" />
-    <meta property="og:title" content="사주미 | AI 사주 해석" />
+    <meta property="og:title" content="사주 해석" />
     <meta
       property="og:description"
       content="생년월일과 태어난 시간으로 사주를 해석해 주는 AI 사주 서비스. 한줄 요약, 상세 해석, 오늘의 운세까지."
@@ -51,7 +62,7 @@
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="사주미 | AI 사주 해석" />
+    <meta name="twitter:title" content="사주 해석" />
     <meta
       name="twitter:description"
       content="생년월일과 태어난 시간으로 사주를 해석해 주는 AI 사주 서비스."
