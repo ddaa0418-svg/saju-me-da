@@ -48,18 +48,16 @@ export default function SavedSajuView({
             : '다른 사람 사주다. 내 걸로 돌아가려면 「내 사주」를 눌러라냥.'}
         </p>
         <div className="saved-actions">
-          <button
-            type="button"
-            className="saved-edit-btn"
-            onClick={onAnalyze}
-            disabled={loading || !user}
-          >
-            {loading
-              ? '식빵 굽는 중...'
-              : viewMode === 'ready'
-                ? '사주 본다냥'
-                : '이 정보로 다시 본다냥'}
-          </button>
+          {viewMode === 'ready' ? (
+            <button
+              type="button"
+              className="saved-edit-btn"
+              onClick={onAnalyze}
+              disabled={loading || !user}
+            >
+              {loading ? '식빵 굽는 중...' : '사주 본다냥'}
+            </button>
+          ) : null}
           {isViewingProfile ? (
             <button type="button" className="saved-secondary-btn" onClick={onEditProfile}>
               프로필 수정

@@ -1065,6 +1065,16 @@
   letter-spacing: -0.02em;
 }
 
+.summary .nyang-copy {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.85;
+  letter-spacing: 0;
+  color: var(--text);
+  word-break: keep-all;
+}
+
 .today-fortune {
   margin: 0;
   padding: 18px 20px 20px;

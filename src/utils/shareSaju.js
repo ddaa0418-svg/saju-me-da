@@ -10,8 +10,28 @@ export function getResultShareIdFromPath(pathname = window.location.pathname) {
   return match ? decodeURIComponent(match[1]) : null
 }
 
+const PUBLIC_ORIGIN = 'https://saju-me-da.vercel.app'
+
+function isLocalHost() {
+  const host = window.location.hostname
+  return host === 'localhost' || host === '127.0.0.1'
+}
+
+export function getShareOrigin() {
+  if (isLocalHost()) return PUBLIC_ORIGIN
+  return window.location.origin.replace(/\/$/, '')
+}
+
 export function getShareUrl(readingId) {
-  return `${window.location.origin}/result/${readingId}`
+  return `${getShareOrigin()}/result/${readingId}`
+}
+
+function getShareCopy({ name }) {
+  const title = name ? `🐱 ${name}님의 사주 해석` : '🐱 사주 해석'
+  const text = name
+    ? `${name}님의 사주 결과를 사주미에서 봤다냥.`
+    : '사주미에서 본 사주 결과다냥.'
+  return { title, text }
 }
 
 async function copyText(text) {
@@ -38,10 +58,7 @@ export async function shareSajuResult({ name, readingId }) {
   }
 
   const url = getShareUrl(readingId)
-  const title = name ? `${name}님의 사주 해석` : '사주 해석'
-  const text = name
-    ? `${name}님의 사주 결과를 사주미에서 봤다냥.`
-    : '사주미에서 본 사주 결과다냥.'
+  const { title, text } = getShareCopy({ name })
 
   if (typeof navigator.share === 'function') {
     try {
@@ -52,6 +69,6 @@ export async function shareSajuResult({ name, readingId }) {
     }
   }
 
-  await copyText(url)
+  await copyText(`${title}\n${text}\n${url}`)
   return 'copied'
 }

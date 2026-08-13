@@ -38,8 +38,8 @@ export default function SharedResultPage({ shareId }) {
         setReading(data)
         setStatus('ready')
         document.title = data.name
-          ? `${data.name}님의 사주 해석`
-          : '공유된 사주 해석'
+          ? `🐱 ${data.name}님의 사주 해석`
+          : '🐱 공유된 사주 해석'
         trackEvent('shared_result_view', { item_id: shareId })
       } catch (loadError) {
         console.error(loadError)

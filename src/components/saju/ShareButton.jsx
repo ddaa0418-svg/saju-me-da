@@ -28,6 +28,7 @@ export default function ShareButton({
           content_type: 'saju_result',
           item_id: readingId,
         })
+        onMessage?.('잘 보냈다. 친구가 보면 된다냥.')
       }
     } catch (shareError) {
       console.error(shareError)
